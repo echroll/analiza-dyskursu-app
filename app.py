@@ -13,7 +13,7 @@ st.set_page_config(layout="wide", page_title="Przeglądarka Dyskursu", page_icon
 
 st.title("📚 Zaawansowana Przeglądarka Dyskursu")
 st.markdown("Filtruj bazę danych, przeszukuj teksty i generuj eleganckie raporty do Worda/PDF.")
-st.markdown("Autor wtyczki Emil Chroll")
+st.markdown("Autor wtyczki Emil C.")
 
 # --- FUNKCJA GENEROWANIA RAPORTU WORD (DOCX) ---
 def stworz_raport_docx(dataframe, aktywne_kolumny_tematów):
@@ -90,17 +90,19 @@ if wgrany_plik is not None:
             except:
                 wgrany_plik.seek(0)
                 df = pd.read_csv(wgrany_plik, header=[0, 1])
-                
-        # Naprawa nagłówków
+        # Naprawa skomplikowanych nagłówków w tabeli
         nowe_kolumny = []
         ostatnia_kategoria = "" 
         
         for col in df.columns:
             kat_glowna = str(col[0]).replace('\n', ' ').strip()
             podkategoria = str(col[1]).replace('\n', ' ').strip()
-            if "Unnamed" not in kat_glowna:
+            
+            # Wzmocnione wykrywanie pustych komórek w nagłówkach
+            if "unnamed" not in kat_glowna.lower() and kat_glowna != "" and kat_glowna.lower() != "nan":
                 ostatnia_kategoria = kat_glowna
-            if "Unnamed" in podkategoria:
+                
+            if "unnamed" in podkategoria.lower() or podkategoria == "" or podkategoria.lower() == "nan":
                 nowe_kolumny.append(kat_glowna)
             else:
                 nowe_kolumny.append(f"{ostatnia_kategoria} -> {podkategoria}")
@@ -219,25 +221,27 @@ if wgrany_plik is not None:
         
         with tab1:
             st.markdown("**Wygeneruj chmurę słów z tekstów.**")
+            
+            # --- BEZPOŚREDNI IMPORT PLIKÓW TXT ZE STOP-LISTĄ ---
+            wgrane_stop_pliki = st.file_uploader("📥 Wgraj swoje pliki stop-words (.txt) [Możesz wrzucić english, polish i russian naraz!]", type=["txt"], accept_multiple_files=True)
+            
+            stop_z_plikow = []
+            if wgrane_stop_pliki:
+                for plik_txt in wgrane_stop_pliki:
+                    tresc = plik_txt.getvalue().decode("utf-8").splitlines()
+                    stop_z_plikow.extend([linia.strip().lower() for linia in tresc if linia.strip()])
+                st.success(f"✅ Wczytano {len(stop_z_plikow)} słów wykluczonych z Twoich plików!")
+            # -------------------------------------------------------------
+            
             col1, col2 = st.columns(2)
             zrodlo_danych = col1.radio("Wybierz zakres:", ["Tylko odfiltrowane rekordy", "Wszystkie dokumenty w bazie"])
             max_slow = col2.number_input("Maksymalna liczba słów:", min_value=10, max_value=500, value=100, step=10)
             
-            # NOWOŚĆ: Checkbox wymuszający korzystanie tylko z cytatów
             tylko_cytaty_chmura = st.checkbox("🎯 Analizuj TYLKO cytaty (pomiń opisy i etykiety badaczy)", value=True)
-            
-            # --- ŁATKA 1: Automatyczne wczytywanie stop-list z plików ---
-            stop_z_plikow = []
-            for plik in ["polish.stopwords.txt", "english.stopwords.txt", "russian.stopwords.txt"]:
-                if os.path.exists(plik):
-                    with open(plik, 'r', encoding='utf-8') as f:
-                        stop_z_plikow.extend([linia.strip().lower() for linia in f.readlines() if linia.strip()])
-            
-            st.info(f"📚 Automatycznie wczytano **{len(stop_z_plikow)}** słów z Twoich plików tekstowych.")
             dodatkowe_stop = st.text_area("Możesz tutaj dopisać dodatkowe słowa wykluczone 'w locie' (oddzielone przecinkiem):", "putin,rosja")
-            # -------------------------------------------------------------
             
             if st.button("Generuj chmurę słów"):
+                import re # Narzędzie do czyszczenia tekstu
                 df_do_chmury = df_filtered if zrodlo_danych == "Tylko odfiltrowane rekordy" else df
                 
                 wszystkie_teksty = []
@@ -252,9 +256,11 @@ if wgrany_plik is not None:
                             wszystkie_teksty.append(str(r[c]))
                 
                 tekst_polaczony = " ".join(wszystkie_teksty)
+                # KRYTYCZNE: Usuwamy znaki interpunkcyjne (kropki, przecinki, cudzysłowy), żeby stop-lista zadziałała!
+                tekst_polaczony = re.sub(r'[^\w\s]', '', tekst_polaczony)
                 
                 if not tekst_polaczony.strip():
-                    st.warning("Brak tekstów do wygenerowania chmury przy obecnych filtrach.")
+                    st.warning("Brak tekstów do wygenerowania chmury.")
                 else:
                     stop_words = set(STOPWORDS)
                     moje_stop = [s.strip().lower() for s in dodatkowe_stop.split(',') if s.strip()]
@@ -270,7 +276,7 @@ if wgrany_plik is not None:
 
         with tab2:
             st.markdown("**Krzywa afektu (Affect Curve) - dynamika nastrojów w czasie.**")
-            st.caption("Analiza polaryzacji emocjonalnej **WYŁĄCZNIE CYTATÓW**. Wykres pokazuje, czy język w danej kategorii badawczej był negatywny/agresywny (poniżej 0) czy pozytywny (powyżej 0).")
+            st.caption("*Uwaga: Wbudowany analizator opiera się na j. angielskim. Wyniki dla cyrylicy/polskiego często będą wskazywać neutralne 0.0, chyba że zostaną użyte internacjonalizmy. Wykres ukazuje jednak pełną gęstość publikacji w czasie.*")
             
             if len(df_filtered) > 0 and st.button("Generuj krzywę afektu dla kategorii"):
                 dane_emocje = []
@@ -285,55 +291,45 @@ if wgrany_plik is not None:
                         if "->" in c and str(r[c]) not in ["Brak danych", "", "nan"]:
                             kategoria, typ = c.split(" -> ")
                             
-                            # NOWOŚĆ: Bierzemy pod uwagę TYLKO cytaty
                             if typ.lower() == "cytat":
                                 tekst_rekordu = str(r[c])
                                 blob = TextBlob(tekst_rekordu)
                                 sentyment = blob.sentiment.polarity
                                 
-                                # Zapisujemy wynik do tabeli (przypisujemy go do konkretnego roku, kategorii i dokumentu)
-                                if sentyment != 0.0:
-                                    dane_emocje.append({
-                                        'Rok': int(rok), 
-                                        'Kategoria': kategoria.upper(), 
-                                        'Sentyment': sentyment,
-                                        'Dokument': tytul
-                                    })
+                                # Usunąłem blokadę - rejestrujemy wszystko, aby pokazać każdy dokument
+                                dane_emocje.append({
+                                    'Rok': int(rok), 
+                                    'Kategoria': kategoria.upper(), 
+                                    'Sentyment': sentyment,
+                                    'Dokument': tytul
+                                })
                 
                 if dane_emocje:
                     df_emocje = pd.DataFrame(dane_emocje)
-                    
-                    # Obliczamy średnią sentymentu dla każdej kategorii w poszczególnych latach
                     srednia_roczna = df_emocje.groupby(['Rok', 'Kategoria'])['Sentyment'].mean().reset_index()
                     wykres_data = srednia_roczna.pivot(index='Rok', columns='Kategoria', values='Sentyment')
                     
-                    # --- ŁATKA 2: CHECKBOXY KATEGORII ---
                     st.write("---")
                     st.markdown("**Wybierz kategorie do nałożenia na wykres:**")
                     
                     dostepne_kategorie = list(wykres_data.columns)
-                    kolumny_chk = st.columns(4) # Tworzymy 4 zgrabne kolumny, żeby checkboxy nie zajęły połowy strony
+                    kolumny_chk = st.columns(4)
                     zaznaczone_kategorie = []
                     
                     for i, kat in enumerate(dostepne_kategorie):
-                        # Domyślnie wszystkie są zaznaczone (value=True)
                         if kolumny_chk[i % 4].checkbox(kat, value=True, key=f"chk_afekt_{kat}"):
                             zaznaczone_kategorie.append(kat)
                             
                     st.write("---")
                     
-                    # Rysujemy tylko to, co zaznaczyła kierowniczka
                     if zaznaczone_kategorie:
                         st.line_chart(wykres_data[zaznaczone_kategorie])
+                        with st.expander("🔍 Zobacz szczegółowe wyniki dla poszczególnych dokumentów (tabela)"):
+                            st.dataframe(df_emocje.sort_values(by=['Rok', 'Sentyment']), use_container_width=True)
                     else:
                         st.warning("Zaznacz przynajmniej jedną kategorię z listy powyżej, aby wygenerować wykres.")
-                    # ------------------------------------
-                    
-                    # Pod wykresem pokazujemy metryczki dla poszczególnych, pojedynczych dokumentów (wierszy)
-                    with st.expander("🔍 Zobacz ładunek emocjonalny dla poszczególnych dokumentów (wierszy)"):
-                        st.dataframe(df_emocje.sort_values(by=['Rok', 'Sentyment']), use_container_width=True)
                 else:
-                    st.warning("W odfiltrowanych danych nie znaleziono cytatów, z których algorytm zdołałby odczytać wyraźne natężenie emocjonalne.")
+                    st.warning("W odfiltrowanych danych nie znaleziono żadnych cytatów dla wybranych osób i lat.")
 
         # --- WYŚWIETLANIE REKORDÓW ---
         st.write("---")
@@ -378,4 +374,4 @@ if wgrany_plik is not None:
     except Exception as e:
         st.error(f"Wystąpił błąd podczas analizy struktury pliku: {e}")
 else:
-    st.info("👆 Czekam na wgranie pliku .xlsx z analizą dyskursu.")
+    st.info("👆 Czekam na wgranie pliku .xlsx - excel - z analizą dyskursu.")
