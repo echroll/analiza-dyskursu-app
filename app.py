@@ -246,7 +246,6 @@ if wgrany_plik is not None:
                         if "->" in c and str(r[c]) not in ["Brak danych", "", "nan"]:
                             kategoria, typ = c.split(" -> ")
                             
-                            # Jeśli checkbox jest zaznaczony, a typ to nie cytat - pomijamy!
                             if tylko_cytaty_chmura and typ.lower() != "cytat":
                                 continue
                                 
@@ -257,10 +256,10 @@ if wgrany_plik is not None:
                 if not tekst_polaczony.strip():
                     st.warning("Brak tekstów do wygenerowania chmury przy obecnych filtrach.")
                 else:
-                                        stop_words = set(STOPWORDS)
+                    stop_words = set(STOPWORDS)
                     moje_stop = [s.strip().lower() for s in dodatkowe_stop.split(',') if s.strip()]
                     stop_words.update(moje_stop)
-                    stop_words.update(stop_z_plikow) # Dodajemy potężną listę z plików TXT
+                    stop_words.update(stop_z_plikow)
                     
                     wc = WordCloud(width=800, height=400, background_color='white', stopwords=stop_words, max_words=max_slow).generate(tekst_polaczony)
                     
