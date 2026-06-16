@@ -6,7 +6,7 @@ from docx import Document
 from docx.shared import Pt, Inches
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud, STOPWORDS
-from textblob import TextBlob
+from transformers import pipeline
 
 # Ustawienie strony
 st.set_page_config(layout="wide", page_title="Przeglądarka Dyskursu", page_icon="📚")
@@ -273,63 +273,80 @@ if wgrany_plik is not None:
                     ax.imshow(wc, interpolation='bilinear')
                     ax.axis("off")
                     st.pyplot(fig)
-
         with tab2:
             st.markdown("**Krzywa afektu (Affect Curve) - dynamika nastrojów w czasie.**")
-            st.caption("*Uwaga: Wbudowany analizator opiera się na j. angielskim. Wyniki dla cyrylicy/polskiego często będą wskazywać neutralne 0.0, chyba że zostaną użyte internacjonalizmy. Wykres ukazuje jednak pełną gęstość publikacji w czasie.*")
+            st.caption("*Analiza wspierana potężnym wielojęzycznym modelem AI (XLM-RoBERTa), który natywnie rozumie język rosyjski (cyrylicę), polski oraz angielski. Odczytuje ładunek emocjonalny od -1.0 (bardzo agresywny/negatywny) do +1.0 (bardzo pozytywny).*")
+            
+            # Zapamiętujemy model w pamięci podręcznej, żeby nie ładował się 5 minut przy każdym kliknięciu
+            @st.cache_resource
+            def wczytaj_model_nlp():
+                return pipeline("sentiment-analysis", model="cardiffnlp/twitter-xlm-roberta-base-sentiment", truncation=True, max_length=512)
             
             if len(df_filtered) > 0 and st.button("Generuj krzywę afektu dla kategorii"):
-                dane_emocje = []
-                for idx, r in df_filtered.iterrows():
-                    rok = str(r.get(kol_rok, 'Brak'))
-                    tytul = str(r.get(next((c for c in df.columns if 'tytuł' in str(c).lower()), 'Brak tytułu'), 'Brak tytułu'))
+                with st.spinner("Uruchamiam sieć neuronową i analizuję teksty... (to potrwa chwilę)"):
+                    analizator = wczytaj_model_nlp()
+                    dane_emocje = []
                     
-                    if rok == 'Brak' or not rok.isdigit():
-                        continue
+                    for idx, r in df_filtered.iterrows():
+                        rok = str(r.get(kol_rok, 'Brak'))
+                        tytul = str(r.get(next((c for c in df.columns if 'tytuł' in str(c).lower()), 'Brak tytułu'), 'Brak tytułu'))
                         
-                    for c in df_filtered.columns:
-                        if "->" in c and str(r[c]) not in ["Brak danych", "", "nan"]:
-                            kategoria, typ = c.split(" -> ")
+                        if rok == 'Brak' or not rok.isdigit():
+                            continue
                             
-                            if typ.lower() == "cytat":
-                                tekst_rekordu = str(r[c])
-                                blob = TextBlob(tekst_rekordu)
-                                sentyment = blob.sentiment.polarity
+                        for c in df_filtered.columns:
+                            if "->" in c and str(r[c]) not in ["Brak danych", "", "nan"]:
+                                kategoria, typ = c.split(" -> ")
                                 
-                                # Usunąłem blokadę - rejestrujemy wszystko, aby pokazać każdy dokument
-                                dane_emocje.append({
-                                    'Rok': int(rok), 
-                                    'Kategoria': kategoria.upper(), 
-                                    'Sentyment': sentyment,
-                                    'Dokument': tytul
-                                })
-                
-                if dane_emocje:
-                    df_emocje = pd.DataFrame(dane_emocje)
-                    srednia_roczna = df_emocje.groupby(['Rok', 'Kategoria'])['Sentyment'].mean().reset_index()
-                    wykres_data = srednia_roczna.pivot(index='Rok', columns='Kategoria', values='Sentyment')
+                                if typ.lower() == "cytat":
+                                    tekst_rekordu = str(r[c])
+                                    
+                                    # Magia AI: Model sam rozpoznaje język i ocenia tekst
+                                    wynik = analizator(tekst_rekordu)[0]
+                                    etykieta = wynik['label']
+                                    pewnosc = wynik['score']
+                                    
+                                    # Model z Cardiff zwraca: LABEL_0 (negatywny), LABEL_1 (neutralny), LABEL_2 (pozytywny)
+                                    if etykieta == 'LABEL_0' or 'negative' in etykieta.lower():
+                                        sentyment = -pewnosc
+                                    elif etykieta == 'LABEL_2' or 'positive' in etykieta.lower():
+                                        sentyment = pewnosc
+                                    else:
+                                        sentyment = 0.0 # Neutralny
+                                    
+                                    dane_emocje.append({
+                                        'Rok': int(rok), 
+                                        'Kategoria': kategoria.upper(), 
+                                        'Sentyment': sentyment,
+                                        'Dokument': tytul
+                                    })
                     
-                    st.write("---")
-                    st.markdown("**Wybierz kategorie do nałożenia na wykres:**")
-                    
-                    dostepne_kategorie = list(wykres_data.columns)
-                    kolumny_chk = st.columns(4)
-                    zaznaczone_kategorie = []
-                    
-                    for i, kat in enumerate(dostepne_kategorie):
-                        if kolumny_chk[i % 4].checkbox(kat, value=True, key=f"chk_afekt_{kat}"):
-                            zaznaczone_kategorie.append(kat)
-                            
-                    st.write("---")
-                    
-                    if zaznaczone_kategorie:
-                        st.line_chart(wykres_data[zaznaczone_kategorie])
-                        with st.expander("🔍 Zobacz szczegółowe wyniki dla poszczególnych dokumentów (tabela)"):
-                            st.dataframe(df_emocje.sort_values(by=['Rok', 'Sentyment']), use_container_width=True)
+                    if dane_emocje:
+                        df_emocje = pd.DataFrame(dane_emocje)
+                        srednia_roczna = df_emocje.groupby(['Rok', 'Kategoria'])['Sentyment'].mean().reset_index()
+                        wykres_data = srednia_roczna.pivot(index='Rok', columns='Kategoria', values='Sentyment')
+                        
+                        st.write("---")
+                        st.markdown("**Wybierz kategorie do nałożenia na wykres:**")
+                        
+                        dostepne_kategorie = list(wykres_data.columns)
+                        kolumny_chk = st.columns(4)
+                        zaznaczone_kategorie = []
+                        
+                        for i, kat in enumerate(dostepne_kategorie):
+                            if kolumny_chk[i % 4].checkbox(kat, value=True, key=f"chk_afekt_{kat}"):
+                                zaznaczone_kategorie.append(kat)
+                                
+                        st.write("---")
+                        
+                        if zaznaczone_kategorie:
+                            st.line_chart(wykres_data[zaznaczone_kategorie])
+                            with st.expander("🔍 Zobacz szczegółowe wyniki dla poszczególnych dokumentów (tabela)"):
+                                st.dataframe(df_emocje.sort_values(by=['Rok', 'Sentyment']), use_container_width=True)
+                        else:
+                            st.warning("Zaznacz przynajmniej jedną kategorię z listy powyżej, aby wygenerować wykres.")
                     else:
-                        st.warning("Zaznacz przynajmniej jedną kategorię z listy powyżej, aby wygenerować wykres.")
-                else:
-                    st.warning("W odfiltrowanych danych nie znaleziono żadnych cytatów dla wybranych osób i lat.")
+                        st.warning("W odfiltrowanych danych nie znaleziono żadnych cytatów dla wybranych osób i lat.")
 
         # --- WYŚWIETLANIE REKORDÓW ---
         st.write("---")
@@ -374,4 +391,4 @@ if wgrany_plik is not None:
     except Exception as e:
         st.error(f"Wystąpił błąd podczas analizy struktury pliku: {e}")
 else:
-    st.info("👆 Czekam na wgranie pliku .xlsx - excel - z analizą dyskursu.")
+    st.info("👆 Czekam na wgranie pliku .xlsx z analizą dyskursu.")
