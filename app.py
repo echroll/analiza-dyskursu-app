@@ -13,7 +13,7 @@ st.set_page_config(layout="wide", page_title="Przeglądarka Dyskursu", page_icon
 
 st.title("📚 Zaawansowana Przeglądarka Dyskursu")
 st.markdown("Filtruj bazę danych, przeszukuj teksty i generuj eleganckie raporty do Worda/PDF.")
-st.markdown("Autor wtyczki Emil C.")
+st.markdown("Autor wtyczki Emil Chroll")
 
 # --- FUNKCJA GENEROWANIA RAPORTU WORD (DOCX) ---
 def stworz_raport_docx(dataframe, aktywne_kolumny_tematów):
