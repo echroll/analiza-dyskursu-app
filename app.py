@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import os
 import io
 from docx import Document
 from docx.shared import Pt, Inches
@@ -225,8 +226,16 @@ if wgrany_plik is not None:
             # NOWOŚĆ: Checkbox wymuszający korzystanie tylko z cytatów
             tylko_cytaty_chmura = st.checkbox("🎯 Analizuj TYLKO cytaty (pomiń opisy i etykiety badaczy)", value=True)
             
-            domyslne_stop = "w,z,i,o,na,to,że,jest,jak,nie,my,co,do,dla,the,a,of,and,in,that,is,for,on,в,и,на,с,что,это,как,мы,по,но,к,за"
-            dodatkowe_stop = st.text_area("Stop-lista (słowa wykluczone, oddzielone przecinkiem):", domyslne_stop)
+            # --- ŁATKA 1: Automatyczne wczytywanie stop-list z plików ---
+            stop_z_plikow = []
+            for plik in ["polish.stopwords.txt", "english.stopwords.txt", "russian.stopwords.txt"]:
+                if os.path.exists(plik):
+                    with open(plik, 'r', encoding='utf-8') as f:
+                        stop_z_plikow.extend([linia.strip().lower() for linia in f.readlines() if linia.strip()])
+            
+            st.info(f"📚 Automatycznie wczytano **{len(stop_z_plikow)}** słów z Twoich plików tekstowych.")
+            dodatkowe_stop = st.text_area("Możesz tutaj dopisać dodatkowe słowa wykluczone 'w locie' (oddzielone przecinkiem):", "putin,rosja")
+            # -------------------------------------------------------------
             
             if st.button("Generuj chmurę słów"):
                 df_do_chmury = df_filtered if zrodlo_danych == "Tylko odfiltrowane rekordy" else df
@@ -248,9 +257,10 @@ if wgrany_plik is not None:
                 if not tekst_polaczony.strip():
                     st.warning("Brak tekstów do wygenerowania chmury przy obecnych filtrach.")
                 else:
-                    stop_words = set(STOPWORDS)
-                    moje_stop = [s.strip().lower() for s in dodatkowe_stop.split(',')]
+                                        stop_words = set(STOPWORDS)
+                    moje_stop = [s.strip().lower() for s in dodatkowe_stop.split(',') if s.strip()]
                     stop_words.update(moje_stop)
+                    stop_words.update(stop_z_plikow) # Dodajemy potężną listę z plików TXT
                     
                     wc = WordCloud(width=800, height=400, background_color='white', stopwords=stop_words, max_words=max_slow).generate(tekst_polaczony)
                     
@@ -296,11 +306,29 @@ if wgrany_plik is not None:
                     
                     # Obliczamy średnią sentymentu dla każdej kategorii w poszczególnych latach
                     srednia_roczna = df_emocje.groupby(['Rok', 'Kategoria'])['Sentyment'].mean().reset_index()
-                    
-                    # "Rozciągamy" tabelę, aby Streamlit narysował osobną linię dla każdej kategorii
                     wykres_data = srednia_roczna.pivot(index='Rok', columns='Kategoria', values='Sentyment')
                     
-                    st.line_chart(wykres_data)
+                    # --- ŁATKA 2: CHECKBOXY KATEGORII ---
+                    st.write("---")
+                    st.markdown("**Wybierz kategorie do nałożenia na wykres:**")
+                    
+                    dostepne_kategorie = list(wykres_data.columns)
+                    kolumny_chk = st.columns(4) # Tworzymy 4 zgrabne kolumny, żeby checkboxy nie zajęły połowy strony
+                    zaznaczone_kategorie = []
+                    
+                    for i, kat in enumerate(dostepne_kategorie):
+                        # Domyślnie wszystkie są zaznaczone (value=True)
+                        if kolumny_chk[i % 4].checkbox(kat, value=True, key=f"chk_afekt_{kat}"):
+                            zaznaczone_kategorie.append(kat)
+                            
+                    st.write("---")
+                    
+                    # Rysujemy tylko to, co zaznaczyła kierowniczka
+                    if zaznaczone_kategorie:
+                        st.line_chart(wykres_data[zaznaczone_kategorie])
+                    else:
+                        st.warning("Zaznacz przynajmniej jedną kategorię z listy powyżej, aby wygenerować wykres.")
+                    # ------------------------------------
                     
                     # Pod wykresem pokazujemy metryczki dla poszczególnych, pojedynczych dokumentów (wierszy)
                     with st.expander("🔍 Zobacz ładunek emocjonalny dla poszczególnych dokumentów (wierszy)"):
