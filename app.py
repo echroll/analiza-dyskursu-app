@@ -217,12 +217,14 @@ if wgrany_plik is not None:
         tab1, tab2 = st.tabs(["☁️ Chmura słów", "📈 Krzywa Afektu"])
         
         with tab1:
-            st.markdown("**Wygeneruj chmurę słów z tekstów (cytaty i opisy).**")
+            st.markdown("**Wygeneruj chmurę słów z tekstów.**")
             col1, col2 = st.columns(2)
             zrodlo_danych = col1.radio("Wybierz zakres:", ["Tylko odfiltrowane rekordy", "Wszystkie dokumenty w bazie"])
             max_slow = col2.number_input("Maksymalna liczba słów:", min_value=10, max_value=500, value=100, step=10)
             
-            # Domyślna stop-lista: PL, ENG, RU (z możliwością dopisywania w interfejsie)
+            # NOWOŚĆ: Checkbox wymuszający korzystanie tylko z cytatów
+            tylko_cytaty_chmura = st.checkbox("🎯 Analizuj TYLKO cytaty (pomiń opisy i etykiety badaczy)", value=True)
+            
             domyslne_stop = "w,z,i,o,na,to,że,jest,jak,nie,my,co,do,dla,the,a,of,and,in,that,is,for,on,в,и,на,с,что,это,как,мы,по,но,к,за"
             dodatkowe_stop = st.text_area("Stop-lista (słowa wykluczone, oddzielone przecinkiem):", domyslne_stop)
             
@@ -233,12 +235,18 @@ if wgrany_plik is not None:
                 for _, r in df_do_chmury.iterrows():
                     for c in df_do_chmury.columns:
                         if "->" in c and str(r[c]) not in ["Brak danych", "", "nan"]:
+                            kategoria, typ = c.split(" -> ")
+                            
+                            # Jeśli checkbox jest zaznaczony, a typ to nie cytat - pomijamy!
+                            if tylko_cytaty_chmura and typ.lower() != "cytat":
+                                continue
+                                
                             wszystkie_teksty.append(str(r[c]))
                 
                 tekst_polaczony = " ".join(wszystkie_teksty)
                 
                 if not tekst_polaczony.strip():
-                    st.warning("Brak tekstów do wygenerowania chmury.")
+                    st.warning("Brak tekstów do wygenerowania chmury przy obecnych filtrach.")
                 else:
                     stop_words = set(STOPWORDS)
                     moje_stop = [s.strip().lower() for s in dodatkowe_stop.split(',')]
@@ -253,34 +261,52 @@ if wgrany_plik is not None:
 
         with tab2:
             st.markdown("**Krzywa afektu (Affect Curve) - dynamika nastrojów w czasie.**")
-            st.caption("Wykres analizuje polaryzację sentymentu tekstów z wybranych filtrów (od -1.0 bardzo negatywne do 1.0 bardzo pozytywne) grupując je według lat.")
+            st.caption("Analiza polaryzacji emocjonalnej **WYŁĄCZNIE CYTATÓW**. Wykres pokazuje, czy język w danej kategorii badawczej był negatywny/agresywny (poniżej 0) czy pozytywny (powyżej 0).")
             
-            if len(df_filtered) > 0 and st.button("Generuj krzywą afektu"):
+            if len(df_filtered) > 0 and st.button("Generuj krzywę afektu dla kategorii"):
                 dane_emocje = []
                 for idx, r in df_filtered.iterrows():
                     rok = str(r.get(kol_rok, 'Brak'))
+                    tytul = str(r.get(next((c for c in df.columns if 'tytuł' in str(c).lower()), 'Brak tytułu'), 'Brak tytułu'))
+                    
                     if rok == 'Brak' or not rok.isdigit():
                         continue
                         
-                    tekst_rekordu = ""
                     for c in df_filtered.columns:
                         if "->" in c and str(r[c]) not in ["Brak danych", "", "nan"]:
-                            tekst_rekordu += " " + str(r[c])
+                            kategoria, typ = c.split(" -> ")
                             
-                    if tekst_rekordu.strip():
-                        # Prosta analiza sentymentu NLP (TextBlob)
-                        blob = TextBlob(tekst_rekordu)
-                        sentyment = blob.sentiment.polarity
-                        dane_emocje.append({'Rok': int(rok), 'Sentyment': sentyment})
+                            # NOWOŚĆ: Bierzemy pod uwagę TYLKO cytaty
+                            if typ.lower() == "cytat":
+                                tekst_rekordu = str(r[c])
+                                blob = TextBlob(tekst_rekordu)
+                                sentyment = blob.sentiment.polarity
+                                
+                                # Zapisujemy wynik do tabeli (przypisujemy go do konkretnego roku, kategorii i dokumentu)
+                                if sentyment != 0.0:
+                                    dane_emocje.append({
+                                        'Rok': int(rok), 
+                                        'Kategoria': kategoria.upper(), 
+                                        'Sentyment': sentyment,
+                                        'Dokument': tytul
+                                    })
                 
                 if dane_emocje:
                     df_emocje = pd.DataFrame(dane_emocje)
-                    srednia_roczna = df_emocje.groupby('Rok')['Sentyment'].mean().reset_index()
-                    srednia_roczna = srednia_roczna.sort_values('Rok')
                     
-                    st.line_chart(srednia_roczna.set_index('Rok'))
+                    # Obliczamy średnią sentymentu dla każdej kategorii w poszczególnych latach
+                    srednia_roczna = df_emocje.groupby(['Rok', 'Kategoria'])['Sentyment'].mean().reset_index()
+                    
+                    # "Rozciągamy" tabelę, aby Streamlit narysował osobną linię dla każdej kategorii
+                    wykres_data = srednia_roczna.pivot(index='Rok', columns='Kategoria', values='Sentyment')
+                    
+                    st.line_chart(wykres_data)
+                    
+                    # Pod wykresem pokazujemy metryczki dla poszczególnych, pojedynczych dokumentów (wierszy)
+                    with st.expander("🔍 Zobacz ładunek emocjonalny dla poszczególnych dokumentów (wierszy)"):
+                        st.dataframe(df_emocje.sort_values(by=['Rok', 'Sentyment']), use_container_width=True)
                 else:
-                    st.warning("Brak danych z poprawnym rokiem do wygenerowania wykresu.")
+                    st.warning("W odfiltrowanych danych nie znaleziono cytatów, z których algorytm zdołałby odczytać wyraźne natężenie emocjonalne.")
 
         # --- WYŚWIETLANIE REKORDÓW ---
         st.write("---")
