@@ -53,6 +53,11 @@ def stworz_raport_docx(dataframe, aktywne_kolumny_tematów):
             if " -> " in col_name:
                 kategoria, typ = col_name.split(" -> ")
                 
+                # --- ŁATKA DOCX: Filtrowanie eksportu ---
+                # Używamy st.session_state, aby złapać wartość checkboxa bez przebudowywania całej funkcji
+                if st.session_state.get('izoluj_kategorie', False) and kategoria != st.session_state.get('wybrana_kat_docx', ''):
+                    continue
+                
                 # Jeśli użytkownik filtruje po konkretnej kategorii, wyciągamy głównie ją
                 wartosc = row[col_name]
                 if wartosc != "Brak danych" and str(wartosc).strip() != "":
@@ -171,6 +176,15 @@ if wgrany_plik is not None:
 
         # 4. NOWOŚĆ: Filtr kategorii tematycznych
         wybrana_kategoria = st.sidebar.selectbox("Wybierz kategorię badawczą:", ["Wszystkie"] + lista_kategorii)
+        
+        # --- ŁATKA: Checkbox izolujący wybraną kategorię ---
+        tylko_wybrana_kategoria = False
+        if wybrana_kategoria != "Wszystkie":
+            tylko_wybrana_kategoria = st.sidebar.checkbox(f"👁️ Pokazuj tekst TYLKO dla kategorii '{wybrana_kategoria}' (ukryj pozostałe)", value=False)
+
+        # Zapisujemy stan do pamięci dla generatora plików DOCX
+        st.session_state['izoluj_kategorie'] = tylko_wybrana_kategoria
+        st.session_state['wybrana_kat_docx'] = wybrana_kategoria
 
         # --- SEKCJA FILTROWANIA DANYCH ---
         df_filtered = df.copy()
@@ -372,6 +386,11 @@ if wgrany_plik is not None:
                 for col_name in df.columns:
                     if " -> " in col_name:
                         kategoria, typ = col_name.split(" -> ")
+                        
+                        # --- ŁATKA: Ukrywanie innych kategorii ---
+                        if tylko_wybrana_kategoria and kategoria != wybrana_kategoria:
+                            continue 
+                        # ------------------------------------------
                         
                         # Jeśli użytkownik wybrał konkretną kategorię, wyróżnijmy ją wizualnie
                         jest_wybrana = (kategoria == wybrana_kategoria)
