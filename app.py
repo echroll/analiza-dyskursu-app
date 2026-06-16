@@ -35,8 +35,14 @@ def stworz_raport_docx(dataframe, aktywne_kolumny_tematów):
         
         # Nagłówek pojedynczego wpisu
         p_head = doc.add_heading(f"📄 {tytul}", level=2)
+        
+        typ_dok = row.get(next((c for c in dataframe.columns if 'typ dokumentu' in str(c).lower()), '-'), '-')
+        odbiorcy = row.get(next((c for c in dataframe.columns if 'odbiorcy' in str(c).lower()), '-'), '-')
+        filozof = row.get(next((c for c in dataframe.columns if 'filozof' in str(c).lower()), '-'), '-')
+        
         p_meta = doc.add_paragraph()
-        p_meta.add_run(f"Autor: {autor} | Rok: {rok} | Źródło: {zrodlo}").italic = True
+        p_meta.add_run(f"Autor: {autor} | Rok: {rok} | Źródło: {zrodlo}\n").italic = True
+        p_meta.add_run(f"Typ dokumentu: {typ_dok} | Odbiorcy: {odbiorcy} | Filozofowie: {filozof}").italic = True
         
         # Dodawanie treści z kategorii tematycznych
         for col_name in dataframe.columns:
@@ -102,19 +108,57 @@ if wgrany_plik is not None:
         kol_autor = next((col for col in df.columns if 'autor' in str(col).lower()), None)
         kol_rok = next((col for col in df.columns if 'rok' in str(col).lower()), None)
 
+        # --- ŁATKA 1: NORMALIZACJA AUTORÓW I DAT ---
+        import re
+        def normalizuj_autora(a):
+            a_low = str(a).lower()
+            wynik = []
+            if 'putin' in a_low: wynik.append('Władimir Putin')
+            if 'kirill' in a_low or 'cyryl' in a_low: wynik.append('Patriarcha Cyryl')
+            if 'lavrov' in a_low or 'ławrow' in a_low: wynik.append('Siergiej Ławrow')
+            if 'medvedev' in a_low or 'miedwiediew' in a_low: wynik.append('Dmitrij Miedwiediew')
+            if 'zakharova' in a_low or 'zacharowa' in a_low: wynik.append('Maria Zacharowa')
+            if 'peskov' in a_low or 'pieskow' in a_low: wynik.append('Dmitrij Pieskow')
+            if 'gorbaczow' in a_low or 'gorbachev' in a_low: wynik.append('Michaił Gorbaczow')
+            
+            if wynik: return ", ".join(wynik)
+            return str(a).strip()
+            
+        def wyciagnij_rok(r):
+            m = re.search(r'\d{4}', str(r))
+            return m.group(0) if m else str(r)
+
+        if kol_autor: df[kol_autor] = df[kol_autor].apply(normalizuj_autora)
+        if kol_rok: df[kol_rok] = df[kol_rok].apply(wyciagnij_rok)
+
+        # -------------------------------------------
+
         # Dynamiczne wyciągnięcie dostępnych kategorii tematycznych z nagłówków
         lista_kategorii = sorted(list(set([col.split(" -> ")[0] for col in df.columns if " -> " in col])))
-
         # --- PASEK BOCZNY (ZAAWANSOWANE FILTRY) ---
         st.sidebar.header("🔍 Filtry i Wyszukiwanie")
 
-        # 1. Wyszukiwarka tekstowa
-        szukana_fraza = st.sidebar.text_input("Szukaj słowa w tekstach:")
+        # 1. Wyszukiwarka tekstowa (Wiele słów)
+        szukana_fraza = st.sidebar.text_input("Szukaj słów (np. zachód wojna):")
 
-        # 2. Filtr Autora
+        # 2. Szybkie przyciski i Filtr Autora
+        st.sidebar.markdown("**🔥 Najczęstsi autorzy (Top 15):**")
+        top_15 = df[kol_autor].value_counts().head(15).index.tolist()
+        top_15 = [a for a in top_15 if a not in ["Brak danych", "-"]]
+        
+        # Tworzymy przyciski w kolumnach
+        kols = st.sidebar.columns(3)
+        for i, aut in enumerate(top_15):
+            krotka_nazwa = aut.split()[-1] if ' ' in aut else aut
+            if kols[i % 3].button(f"👤 {krotka_nazwa}", key=f"btn_{i}"):
+                st.session_state['moj_autor'] = aut
+
         autorzy = ["Wszyscy"] + sorted([str(a) for a in df[kol_autor].unique() if str(a) != "Brak danych"])
-        wybrany_autor = st.sidebar.selectbox("Wybierz autora:", autorzy)
+        
+        if 'moj_autor' not in st.session_state:
+            st.session_state['moj_autor'] = "Wszyscy"
 
+        wybrany_autor = st.sidebar.selectbox("Wybierz autora:", autorzy, key='moj_autor')
         # 3. Filtr Roku
         lata = ["Wszystkie"] + sorted([str(r) for r in df[kol_rok].unique() if str(r) != "Brak danych"])
         wybrany_rok = st.sidebar.selectbox("Wybierz rok:", lata)
@@ -137,10 +181,11 @@ if wgrany_plik is not None:
             warunek = df_filtered[powiazane_kolumny].apply(lambda row: any(str(x) != "Brak danych" and str(x).strip() != "" for x in row), axis=1)
             df_filtered = df_filtered[warunek]
 
-        # Filtrowanie wyszukiwarką tekstową
+        # Filtrowanie wyszukiwarką tekstową (Wiele słów)
         if szukana_fraza:
-            szukana_fraza = szukana_fraza.lower()
-            tekstowy_warunek = df_filtered.apply(lambda row: any(szukana_fraza in str(x).lower() for x in row), axis=1)
+            slowa_kluczowe = szukana_fraza.lower().split()
+            # Musi zawierać KAŻDE wpisane słowo (w dowolnej z kolumn)
+            tekstowy_warunek = df_filtered.apply(lambda row: all(any(slowo in str(x).lower() for x in row) for slowo in slowa_kluczowe), axis=1)
             df_filtered = df_filtered[tekstowy_warunek]
 
         # --- PANEL AKCJI (DRUKOWANIE/EXPORT) ---
@@ -174,7 +219,14 @@ if wgrany_plik is not None:
             
             # NOWOŚĆ: Używamy expandera, aby strona była czysta i zwarta
             with st.expander(f"📄 {tytul} ({autor} - {rok})"):
-                st.caption(f"**Pełne źródło:** {zrodlo}")
+                # Wyciągamy brakujące metadane, ignorując spacje
+                typ_dok = row.get(next((c for c in df.columns if 'typ dokumentu' in str(c).lower()), '-'), '-')
+                odbiorcy = row.get(next((c for c in df.columns if 'odbiorcy' in str(c).lower()), '-'), '-')
+                filozof = row.get(next((c for c in df.columns if 'filozof' in str(c).lower()), '-'), '-')
+                
+                st.markdown(f"**Źródło:** {zrodlo} | **Typ dokumentu:** {typ_dok}")
+                st.markdown(f"**Odbiorcy:** {odbiorcy} | **Odniesienia do filozofów:** {filozof}")
+                st.write("---")
                 
                 # Przechodzimy po kolumnach
                 for col_name in df.columns:
