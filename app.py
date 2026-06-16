@@ -3,6 +3,9 @@ import pandas as pd
 import io
 from docx import Document
 from docx.shared import Pt, Inches
+import matplotlib.pyplot as plt
+from wordcloud import WordCloud, STOPWORDS
+from textblob import TextBlob
 
 # Ustawienie strony
 st.set_page_config(layout="wide", page_title="Przeglądarka Dyskursu", page_icon="📚")
@@ -207,6 +210,77 @@ if wgrany_plik is not None:
             st.sidebar.warning("Brak rekordów do eksportu.")
 
         st.subheader(f"📊 Znaleziono rekordów spełniających kryteria: {len(df_filtered)}")
+
+        # --- ZAKŁADKI Z WIZUALIZACJAMI (CHMURA I EMOCJE) ---
+        st.write("---")
+        st.header("🧠 Analiza NLP (Chmura i Afekt)")
+        tab1, tab2 = st.tabs(["☁️ Chmura słów", "📈 Krzywa Afektu"])
+        
+        with tab1:
+            st.markdown("**Wygeneruj chmurę słów z tekstów (cytaty i opisy).**")
+            col1, col2 = st.columns(2)
+            zrodlo_danych = col1.radio("Wybierz zakres:", ["Tylko odfiltrowane rekordy", "Wszystkie dokumenty w bazie"])
+            max_slow = col2.number_input("Maksymalna liczba słów:", min_value=10, max_value=500, value=100, step=10)
+            
+            # Domyślna stop-lista: PL, ENG, RU (z możliwością dopisywania w interfejsie)
+            domyslne_stop = "w,z,i,o,na,to,że,jest,jak,nie,my,co,do,dla,the,a,of,and,in,that,is,for,on,в,и,на,с,что,это,как,мы,по,но,к,за"
+            dodatkowe_stop = st.text_area("Stop-lista (słowa wykluczone, oddzielone przecinkiem):", domyslne_stop)
+            
+            if st.button("Generuj chmurę słów"):
+                df_do_chmury = df_filtered if zrodlo_danych == "Tylko odfiltrowane rekordy" else df
+                
+                wszystkie_teksty = []
+                for _, r in df_do_chmury.iterrows():
+                    for c in df_do_chmury.columns:
+                        if "->" in c and str(r[c]) not in ["Brak danych", "", "nan"]:
+                            wszystkie_teksty.append(str(r[c]))
+                
+                tekst_polaczony = " ".join(wszystkie_teksty)
+                
+                if not tekst_polaczony.strip():
+                    st.warning("Brak tekstów do wygenerowania chmury.")
+                else:
+                    stop_words = set(STOPWORDS)
+                    moje_stop = [s.strip().lower() for s in dodatkowe_stop.split(',')]
+                    stop_words.update(moje_stop)
+                    
+                    wc = WordCloud(width=800, height=400, background_color='white', stopwords=stop_words, max_words=max_slow).generate(tekst_polaczony)
+                    
+                    fig, ax = plt.subplots(figsize=(10, 5))
+                    ax.imshow(wc, interpolation='bilinear')
+                    ax.axis("off")
+                    st.pyplot(fig)
+
+        with tab2:
+            st.markdown("**Krzywa afektu (Affect Curve) - dynamika nastrojów w czasie.**")
+            st.caption("Wykres analizuje polaryzację sentymentu tekstów z wybranych filtrów (od -1.0 bardzo negatywne do 1.0 bardzo pozytywne) grupując je według lat.")
+            
+            if len(df_filtered) > 0 and st.button("Generuj krzywą afektu"):
+                dane_emocje = []
+                for idx, r in df_filtered.iterrows():
+                    rok = str(r.get(kol_rok, 'Brak'))
+                    if rok == 'Brak' or not rok.isdigit():
+                        continue
+                        
+                    tekst_rekordu = ""
+                    for c in df_filtered.columns:
+                        if "->" in c and str(r[c]) not in ["Brak danych", "", "nan"]:
+                            tekst_rekordu += " " + str(r[c])
+                            
+                    if tekst_rekordu.strip():
+                        # Prosta analiza sentymentu NLP (TextBlob)
+                        blob = TextBlob(tekst_rekordu)
+                        sentyment = blob.sentiment.polarity
+                        dane_emocje.append({'Rok': int(rok), 'Sentyment': sentyment})
+                
+                if dane_emocje:
+                    df_emocje = pd.DataFrame(dane_emocje)
+                    srednia_roczna = df_emocje.groupby('Rok')['Sentyment'].mean().reset_index()
+                    srednia_roczna = srednia_roczna.sort_values('Rok')
+                    
+                    st.line_chart(srednia_roczna.set_index('Rok'))
+                else:
+                    st.warning("Brak danych z poprawnym rokiem do wygenerowania wykresu.")
 
         # --- WYŚWIETLANIE REKORDÓW ---
         st.write("---")
