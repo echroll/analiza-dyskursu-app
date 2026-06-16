@@ -291,12 +291,11 @@ if wgrany_plik is not None:
             st.markdown("**Krzywa afektu (Affect Curve) - dynamika nastrojów w czasie.**")
             st.caption("*Analiza wspierana potężnym wielojęzycznym modelem AI (XLM-RoBERTa), który natywnie rozumie język rosyjski (cyrylicę), polski oraz angielski. Odczytuje ładunek emocjonalny od -1.0 (bardzo agresywny/negatywny) do +1.0 (bardzo pozytywny).*")
             
-            # Zapamiętujemy model w pamięci podręcznej, żeby nie ładował się 5 minut przy każdym kliknięciu
             @st.cache_resource
             def wczytaj_model_nlp():
                 return pipeline("sentiment-analysis", model="cardiffnlp/twitter-xlm-roberta-base-sentiment", truncation=True, max_length=512)
             
-            if len(df_filtered) > 0 and st.button("Generuj krzywę afektu dla kategorii"):
+            if len(df_filtered) > 0 and st.button("Generuj krzywę afektu dla wybranego zakresu"):
                 with st.spinner("Uruchamiam sieć neuronową i analizuję teksty... (to potrwa chwilę)"):
                     analizator = wczytaj_model_nlp()
                     dane_emocje = []
@@ -312,21 +311,24 @@ if wgrany_plik is not None:
                             if "->" in c and str(r[c]) not in ["Brak danych", "", "nan"]:
                                 kategoria, typ = c.split(" -> ")
                                 
+                                # --- ŁATKA 1: WYKRES SŁUCHA GŁÓWNYCH FILTRÓW Z BOKU ---
+                                if wybrana_kategoria != "Wszystkie" and kategoria != wybrana_kategoria:
+                                    continue
+                                # -----------------------------------------------------
+                                
                                 if typ.lower() == "cytat":
                                     tekst_rekordu = str(r[c])
                                     
-                                    # Magia AI: Model sam rozpoznaje język i ocenia tekst
                                     wynik = analizator(tekst_rekordu)[0]
                                     etykieta = wynik['label']
                                     pewnosc = wynik['score']
                                     
-                                    # Model z Cardiff zwraca: LABEL_0 (negatywny), LABEL_1 (neutralny), LABEL_2 (pozytywny)
                                     if etykieta == 'LABEL_0' or 'negative' in etykieta.lower():
                                         sentyment = -pewnosc
                                     elif etykieta == 'LABEL_2' or 'positive' in etykieta.lower():
                                         sentyment = pewnosc
                                     else:
-                                        sentyment = 0.0 # Neutralny
+                                        sentyment = 0.0
                                     
                                     dane_emocje.append({
                                         'Rok': int(rok), 
@@ -340,18 +342,19 @@ if wgrany_plik is not None:
                         srednia_roczna = df_emocje.groupby(['Rok', 'Kategoria'])['Sentyment'].mean().reset_index()
                         wykres_data = srednia_roczna.pivot(index='Rok', columns='Kategoria', values='Sentyment')
                         
+                        # --- ŁATKA 2: ELEGANCKI MULTISELECT ZAMIAST CHECKBOXÓW ---
                         st.write("---")
-                        st.markdown("**Wybierz kategorie do nałożenia na wykres:**")
+                        st.markdown("**Wyświetlane kategorie (możesz odkliknąć te, których nie chcesz widzieć na wykresie):**")
                         
                         dostepne_kategorie = list(wykres_data.columns)
-                        kolumny_chk = st.columns(4)
-                        zaznaczone_kategorie = []
                         
-                        for i, kat in enumerate(dostepne_kategorie):
-                            if kolumny_chk[i % 4].checkbox(kat, value=True, key=f"chk_afekt_{kat}"):
-                                zaznaczone_kategorie.append(kat)
-                                
+                        zaznaczone_kategorie = st.multiselect(
+                            "Wybierz linie widoczne na wykresie:", 
+                            options=dostepne_kategorie, 
+                            default=dostepne_kategorie # Domyślnie ładujemy wszystkie, które pasują do filtra
+                        )
                         st.write("---")
+                        # ---------------------------------------------------------
                         
                         if zaznaczone_kategorie:
                             st.line_chart(wykres_data[zaznaczone_kategorie])
@@ -360,7 +363,7 @@ if wgrany_plik is not None:
                         else:
                             st.warning("Zaznacz przynajmniej jedną kategorię z listy powyżej, aby wygenerować wykres.")
                     else:
-                        st.warning("W odfiltrowanych danych nie znaleziono żadnych cytatów dla wybranych osób i lat.")
+                        st.warning("W odfiltrowanych danych (dla tego autora/roku/kategorii) nie znaleziono żadnych cytatów.")
 
         # --- WYŚWIETLANIE REKORDÓW ---
         st.write("---")
